@@ -4,20 +4,28 @@ require 'httparty'
 require 'dotenv'
 Dotenv.load
 
+
 class GiftBasket < Sinatra::Base
   attr_reader :tokens
-  API_KEY = ENV['API_KEY']
-  API_SECRET = ENV['API_SECRET']
-  APP_URL = "jamie.ngrok.io"
+  API_KEY = ENV['SHOPIFY_API_KEY']
+  API_SECRET = ENV['SHOPIFY_API_SECRET']
+  APP_URL = "9e578c7f.ngrok.io"
 
   def initialize
     @tokens = {}
     super
   end
 
+  get '/giftbasket/login' do
+    erb :new
+  end
+
   get '/giftbasket/install' do
     shop = request.params['shop']
-    scopes = "read_orders,read_products,write_products"
+    scopes = "read_orders,read_products,write_products,read_customers,write_customers"
+
+    puts API_KEY
+    puts API_SECRET
 
     # construct the installation URL and redirect the merchant
     install_url = "http://#{shop}/admin/oauth/authorize?client_id=#{API_KEY}"\

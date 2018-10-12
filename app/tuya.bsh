@@ -1,0 +1,1 @@
+curl -X GET https://openapi.tuyaus.com/v1.0/token?grant_type=1 -H "client_id: " -H "sign: " -H "t: "

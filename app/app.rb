@@ -2,19 +2,81 @@ require 'shopify_api'
 require 'sinatra'
 require 'httparty'
 require 'dotenv'
+
+require 'date'
+require 'digest'
+
 Dotenv.load
 
 
 class GiftBasket < Sinatra::Base
   attr_reader :tokens
-  API_KEY = ENV['SHOPIFY_API_KEY']
-  API_SECRET = ENV['SHOPIFY_API_SECRET']
-  APP_URL = "9e578c7f.ngrok.io"
+  SHOPIFY_API_KEY = ENV['SHOPIFY_API_KEY']
+  SHOPIFY_API_SECRET = ENV['SHOPIFY_API_SECRET']
+  APP_URL = ENV['APP_URL']
+
+  TUYA_API_KEY = ENV['TUYA_API_KEY']
+  TUYA_API_SECRET = ENV['TUYA_API_SECRET']
+  TUYA_URL = 'openapi.tuyaus.com'
 
   def initialize
     @tokens = {}
     super
   end
+
+  get '/' do
+    redirect '/giftbasket/login'
+  end
+
+  get '/giftbasket/test' do
+    payload = {
+      "customer": {
+        "email": "sampleEmailAddress@hotmail.com",
+        "first_name": nil,
+        "last_name": nil
+      }
+    }
+    
+    shop = @tokens['shop']
+    # puts response
+    response = HTTParty.post("https://wouxtest.myshopify.com/admin/customers.json", headers: {"X-Shopify-Access-Token": "#{@tokens[shop]}"}, body: payload)
+    puts response
+  end
+
+  get '/tuya' do
+    info = tokenSign()
+    time = info['time']
+    sign = info['sign']
+    response = HTTParty.get("https://#{TUYA_URL}/v1.0/token?grant_type=1", {
+      headers: {
+        "client_id" => "#{TUYA_API_KEY}", 
+        "sign" => "#{sign}", 
+        "t" => "#{time}"
+      }
+    })
+
+    puts response
+
+    @tokens['access'] = response['result']['access_token']
+    expire = response['expire_time']
+    @tokens['refresh'] = response['refresh_token']
+
+    info = userSign()
+    time = info['time']
+    sign = info['sign']
+
+    response = HTTParty.get("https://#{TUYA_URL}/v1.0/apps/erl/users?page_no=1&page_size=10", {
+      headers: {
+        "client_id" => "#{TUYA_API_KEY}", 
+        "access_token" => "#{@tokens['access']}",
+        "sign" => "#{sign}", 
+        "t" => "#{time}"
+      }
+    })
+
+    puts response
+  end
+  
 
   get '/giftbasket/login' do
     erb :new
@@ -22,13 +84,11 @@ class GiftBasket < Sinatra::Base
 
   get '/giftbasket/install' do
     shop = request.params['shop']
+    @tokens['shop'] = shop
     scopes = "read_orders,read_products,write_products,read_customers,write_customers"
 
-    puts API_KEY
-    puts API_SECRET
-
     # construct the installation URL and redirect the merchant
-    install_url = "http://#{shop}/admin/oauth/authorize?client_id=#{API_KEY}"\
+    install_url = "http://#{shop}/admin/oauth/authorize?client_id=#{SHOPIFY_API_KEY}"\
                 "&scope=#{scopes}&redirect_uri=https://#{APP_URL}/giftbasket/auth"
 
     # redirect to the install_url
@@ -46,13 +106,14 @@ class GiftBasket < Sinatra::Base
 
     # if no access token for this particular shop exist,
     # POST the OAuth request and receive the token in the response
-    get_shop_access_token(shop,API_KEY,API_SECRET,code)
+    get_shop_access_token(shop,SHOPIFY_API_KEY,SHOPIFY_API_SECRET,code)
 
     # create webhook for order creation if it doesn't exist
     create_order_webhook
     
     # now that the session is activated, redirect to the bulk edit page
-    redirect bulk_edit_url
+    # redirect bulk_edit_url
+    redirect '/giftbasket/test'
   end
 
   post '/giftbasket/webhook/order_create' do
@@ -105,6 +166,19 @@ class GiftBasket < Sinatra::Base
 
 
   helpers do
+
+    def tokenSign()
+      time = DateTime.now.strftime('%Q')
+      sign = Digest::MD5.hexdigest(TUYA_API_KEY + TUYA_API_SECRET + time).upcase
+      return {"time" => time, "sign" => sign}
+    end
+
+    def userSign()
+      time = DateTime.now.strftime('%Q')
+      sign = Digest::MD5.hexdigest(TUYA_API_KEY + @tokens['access'] + TUYA_API_SECRET + time).upcase
+      return {"time" => time, "sign" => sign}
+    end
+
     def get_shop_access_token(shop,client_id,client_secret,code)
       if @tokens[shop].nil?
         url = "https://#{shop}/admin/oauth/access_token"
@@ -135,7 +209,7 @@ class GiftBasket < Sinatra::Base
     def validate_hmac(hmac,request)
       h = request.params.reject{|k,_| k == 'hmac' || k == 'signature'}
       query = URI.escape(h.sort.collect{|k,v| "#{k}=#{v}"}.join('&'))
-      digest = OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new('sha256'), API_SECRET, query)
+      digest = OpenSSL::HMAC.hexdigest(OpenSSL::Digest.new('sha256'), SHOPIFY_API_SECRET, query)
 
       unless (hmac == digest)
         return [403, "Authentication failed. Digest provided was: #{digest}"]
@@ -144,7 +218,7 @@ class GiftBasket < Sinatra::Base
 
     def verify_webhook(hmac, data)
       digest = OpenSSL::Digest.new('sha256')
-      calculated_hmac = Base64.encode64(OpenSSL::HMAC.digest(digest, API_SECRET, data)).strip
+      calculated_hmac = Base64.encode64(OpenSSL::HMAC.digest(digest, SHOPIFY_API_SECRET, data)).strip
 
       hmac == calculated_hmac
     end
